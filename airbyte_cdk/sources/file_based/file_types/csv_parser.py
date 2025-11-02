@@ -203,11 +203,40 @@ class CsvParser(FileTypeParser):
                 break
 
         if not type_inferrer_by_field:
-            raise AirbyteTracedException(
-                message=f"Could not infer schema as there are no rows in {file.uri}. If having an empty CSV file is expected, ignore this. "
-                f"Else, please contact Airbyte.",
-                failure_type=FailureType.config_error,
-            )
+            # No data rows: fallback to header-only schema with string types
+            try:
+                config_format_fallback = _extract_format(config)
+                dialect_name = f"{config.name}_{str(uuid4())}_{DIALECT_NAME}"
+                csv.register_dialect(
+                    dialect_name,
+                    delimiter=config_format_fallback.delimiter,
+                    quotechar=config_format_fallback.quote_char,
+                    escapechar=config_format_fallback.escape_char,
+                    doublequote=config_format_fallback.double_quote,
+                    quoting=csv.QUOTE_MINIMAL,
+                )
+                try:
+                    with stream_reader.open_file(
+                        file, self.file_read_mode, config_format_fallback.encoding, logger
+                    ) as fp:
+                        headers = self._csv_reader._get_headers(  # type: ignore[attr-defined]
+                            fp, config_format_fallback, dialect_name
+                        )
+                finally:
+                    csv.unregister_dialect(dialect_name)
+            except Exception as exc:
+                raise AirbyteTracedException(
+                    message=(
+                        f"Could not infer schema: header-only CSV in {file.uri} could not be read. "
+                        f"If empty CSV files are expected, consider skipping them."
+                    ),
+                    failure_type=FailureType.config_error,
+                    exception=exc,
+                )
+            # Build a schema with all columns as string
+            schema = {header.strip(): {"type": "string"} for header in headers}
+            data_generator.close()
+            return schema
         schema = {
             header.strip(): {"type": type_inferred.infer()}
             for header, type_inferred in type_inferrer_by_field.items()

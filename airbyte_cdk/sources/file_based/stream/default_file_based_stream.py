@@ -6,6 +6,8 @@ import asyncio
 import itertools
 import traceback
 from collections import defaultdict
+import re
+from datetime import datetime, timedelta
 from copy import deepcopy
 from functools import cache
 from os import path
@@ -38,6 +40,11 @@ from airbyte_cdk.sources.streams import IncrementalMixin
 from airbyte_cdk.sources.streams.core import JsonSchema
 from airbyte_cdk.sources.utils.record_helper import stream_data_to_airbyte_message
 from airbyte_cdk.utils.traced_exception import AirbyteTracedException
+
+try:
+    from dateutil.relativedelta import relativedelta  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    relativedelta = None  # type: ignore
 
 
 class DefaultFileBasedStream(AbstractFileBasedStream, IncrementalMixin):
@@ -309,9 +316,111 @@ class DefaultFileBasedStream(AbstractFileBasedStream, IncrementalMixin):
         """
         Return all files that belong to the stream as defined by the stream's globs.
         """
+        original_globs = self.config.globs or []
+        expanded_globs = self._expand_date_macros(original_globs)
+        if expanded_globs != original_globs:
+            self.logger.info(
+                msg=f"Expanded date macros in globs: {original_globs} -> {expanded_globs}"
+            )
         return self.stream_reader.get_matching_files(
-            self.config.globs or [], self.config.legacy_prefix, self.logger
+            expanded_globs, self.config.legacy_prefix, self.logger
         )
+
+    def _expand_date_macros(self, globs: List[str]) -> List[str]:
+        """Expand date macros into concrete globs based on current UTC time.
+
+        Supported macro format (any item in globs list):
+          ${date:pattern=yyyy/MM/** offset=-1M}
+
+        - pattern: supports tokens yyyy, MM or mm, dd, HH (zero-padded)
+        - offset: optional signed integer with unit (Y,M,D,h). Examples: -1M, +3D, 0M
+
+        Any non-macro string is returned as-is.
+        """
+        expanded: List[str] = []
+        now = datetime.utcnow()
+        macro_re = re.compile(r"^\$\{date:([^}]*)\}$")
+        # Parse key=value pairs inside macro. Use SPACE-separated pairs only (commas are not supported).
+        # Example body accepted: "pattern=yyyy/MM/** offset=-1M"
+        kv_re = re.compile(r"([a-zA-Z_]+)\s*=\s*([^\s}]+)")
+
+        for item in globs:
+            m = macro_re.match(item)
+            if not m:
+                expanded.append(item)
+                continue
+            body = m.group(1)
+            # Reject comma-separated macros to avoid UI splitting into multiple globs
+            if "," in body:
+                self.logger.warning(
+                    msg=(
+                        "Date macro ignored because it uses commas; use space-separated key/value pairs instead. "
+                        f"macro={item}"
+                    )
+                )
+                expanded.append(item)
+                continue
+
+            # Extract space-separated key=value pairs
+            params: Dict[str, str] = {}
+            for km in kv_re.finditer(body):
+                params[km.group(1).lower()] = km.group(2)
+
+            pattern = params.get("pattern", "yyyy/MM/**")
+            offset_str = params.get("offset", "0M")
+            dt = self._apply_offset(now, offset_str)
+            expanded.append(self._render_pattern(dt, pattern))
+
+        return expanded
+
+    def _apply_offset(self, dt: datetime, offset: str) -> datetime:
+        """Apply offset like -1M, +3D, 0M to a datetime in UTC.
+        Units (case-insensitive): Y/y (years), M/m (months), D/d (days), H/h (hours).
+        """
+        m = re.match(r"^([+-]?)(\d+)([YyMmDdHh])$", offset)
+        if not m:
+            return dt
+        sign, num_str, unit = m.groups()
+        num = int(num_str)
+        if sign == "-":
+            num = -num
+
+        unit = unit.lower()
+
+        if unit == "h":
+            return dt + timedelta(hours=num)
+        if unit == "d":
+            return dt + timedelta(days=num)
+        # Months/Years need calendar-aware math
+        if relativedelta is not None:
+            if unit == "m":
+                return dt + relativedelta(months=num)
+            if unit == "y":
+                return dt + relativedelta(years=num)
+        # Fallback approximation if dateutil not available
+        if unit == "m":
+            return dt + timedelta(days=30 * num)
+        if unit == "y":
+            return dt + timedelta(days=365 * num)
+        return dt
+
+    def _render_pattern(self, dt: datetime, pattern: str) -> str:
+        """Render a pattern replacing tokens with zero-padded UTC components.
+        Supported tokens: yyyy, YYYY, MM, mm, dd, HH
+        """
+        tokens = {
+            "yyyy": dt.strftime("%Y"),
+            "YYYY": dt.strftime("%Y"),
+            "MM": dt.strftime("%m"),
+            "mm": dt.strftime("%m"),
+            "dd": dt.strftime("%d"),
+            "HH": dt.strftime("%H"),
+            "hh": dt.strftime("%H"),
+        }
+        out = pattern
+        for k, v in tokens.items():
+            out = out.replace(k, v)
+        return out
 
     def as_airbyte_stream(self) -> AirbyteStream:
         file_stream = super().as_airbyte_stream()

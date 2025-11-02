@@ -49,6 +49,33 @@ class CustomConfig(AbstractFileBasedSpec):
 For more information, feel free to check the docstrings of each classes or check specific implementations (like source-s3).
 
 ## Supported File Types
+## Glob patterns and date macros
+
+Globs in file-based connectors select which files to read. In addition to standard globbing (e.g. `2025/09/**`), the CDK supports simple date macros that are expanded at runtime based on current UTC.
+
+Use the following macro form as a whole glob entry:
+
+```
+${date:pattern=yyyy/MM/**, offset=-1M}
+``
+
+- `pattern`: supports tokens `yyyy`/`YYYY`, `MM`/`mm`, `dd`/`DD`, `HH`/`hh` (tokens are case-insensitive). Include any wildcards you need (e.g. `/**`).
+- `offset`: optional relative offset with units `Y/y` (years), `M/m` (months), `D/d` (days), `H/h` (hours), case-insensitive. Examples: `0M`, `-1M`, `+3D`, `-1h`.
+- Key/value pairs must be separated by space (commas are not supported due to UI splitting):
+  - `${date:pattern=yyyy/MM/** offset=-1M}`
+
+Examples:
+
+- Current month only: `${date:pattern=yyyy/MM/**, offset=0M}`
+- Last month only: `${date:pattern=yyyy/MM/**, offset=-1M}`
+- Today by hour: `${date:pattern=yyyy/MM/dd/HH/**, offset=0D}`
+- Yesterday by hour: `${date:pattern=yyyy/MM/dd/HH/**, offset=-1D}`
+
+Notes:
+- The macro must occupy the entire glob string. Do not append `**` outside the macro.
+- Multiple macros can be listed in `globs` to cover multiple windows (e.g., current and last month).
+- Month/year arithmetic prefers calendar-aware math when `python-dateutil` is available; otherwise, an approximate fallback is used.
+
 
 ### Avro
 
