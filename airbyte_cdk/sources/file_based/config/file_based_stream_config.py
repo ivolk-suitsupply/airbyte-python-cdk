@@ -34,8 +34,9 @@ class FileBasedStreamConfig(BaseModel):
             'The pattern used to specify which files should be selected from the file system. '
             'For more information on glob pattern matching look <a href="https://en.wikipedia.org/wiki/Glob_(programming)">here</a>. '
             'Date macros are supported and expanded at runtime (UTC). Use the macro as a full glob entry, e.g.: '
-            '${date:pattern=yyyy/MM/** offset=0M} for current month; ${date:pattern=yyyy/MM/** offset=-1M} for last month. '
-            'Tokens are case-insensitive: yyyy/YY, MM/mm, dd/DD, HH/hh. Offsets accept Y/y, M/m, D/d, H/h (e.g., -1h, +3D). '
+            '${date:pattern=%Y/%m/** offset=0M} for current month; ${date:pattern=%Y/%m/** offset=-1M} for last month. '
+            'Pattern uses Python strftime format codes (e.g., %Y for year, %m for month, %d for day, %H for hour). '
+            'Offsets accept Y/y (years), M/m (months), D/d (days), H/h (hours), e.g., -1M, +3D, -2h. '
             'Key/value pairs must be separated by space (commas are not supported).'
         ),
         order=1,

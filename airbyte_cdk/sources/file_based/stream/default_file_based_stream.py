@@ -330,9 +330,9 @@ class DefaultFileBasedStream(AbstractFileBasedStream, IncrementalMixin):
         """Expand date macros into concrete globs based on current UTC time.
 
         Supported macro format (any item in globs list):
-          ${date:pattern=yyyy/MM/** offset=-1M}
+          ${date:pattern=%Y/%m/** offset=-1M}
 
-        - pattern: supports tokens yyyy, MM or mm, dd, HH (zero-padded)
+        - pattern: supports Python strftime format codes (e.g., %Y, %m, %d, %H, %M, %S)
         - offset: optional signed integer with unit (Y,M,D,h). Examples: -1M, +3D, 0M
 
         Any non-macro string is returned as-is.
@@ -341,7 +341,7 @@ class DefaultFileBasedStream(AbstractFileBasedStream, IncrementalMixin):
         now = datetime.utcnow()
         macro_re = re.compile(r"^\$\{date:([^}]*)\}$")
         # Parse key=value pairs inside macro. Use SPACE-separated pairs only (commas are not supported).
-        # Example body accepted: "pattern=yyyy/MM/** offset=-1M"
+        # Example body accepted: "pattern=%Y/%m/** offset=-1M"
         kv_re = re.compile(r"([a-zA-Z_]+)\s*=\s*([^\s}]+)")
 
         for item in globs:
@@ -366,7 +366,7 @@ class DefaultFileBasedStream(AbstractFileBasedStream, IncrementalMixin):
             for km in kv_re.finditer(body):
                 params[km.group(1).lower()] = km.group(2)
 
-            pattern = params.get("pattern", "yyyy/MM/**")
+            pattern = params.get("pattern", "%Y/%m/**")
             offset_str = params.get("offset", "0M")
             dt = self._apply_offset(now, offset_str)
             expanded.append(self._render_pattern(dt, pattern))
@@ -405,22 +405,12 @@ class DefaultFileBasedStream(AbstractFileBasedStream, IncrementalMixin):
         return dt
 
     def _render_pattern(self, dt: datetime, pattern: str) -> str:
-        """Render a pattern replacing tokens with zero-padded UTC components.
-        Supported tokens: yyyy, YYYY, MM, mm, dd, HH
+        """Render a pattern using Python's strftime format codes.
+        
+        Uses standard strftime format codes like %Y, %m, %d, %H, %M, %S.
+        See https://docs.python.org/3/library/datetime.html#strftime-strptime-behavior
         """
-        tokens = {
-            "yyyy": dt.strftime("%Y"),
-            "YYYY": dt.strftime("%Y"),
-            "MM": dt.strftime("%m"),
-            "mm": dt.strftime("%m"),
-            "dd": dt.strftime("%d"),
-            "HH": dt.strftime("%H"),
-            "hh": dt.strftime("%H"),
-        }
-        out = pattern
-        for k, v in tokens.items():
-            out = out.replace(k, v)
-        return out
+        return dt.strftime(pattern)
 
     def as_airbyte_stream(self) -> AirbyteStream:
         file_stream = super().as_airbyte_stream()

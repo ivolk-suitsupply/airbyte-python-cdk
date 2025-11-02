@@ -56,20 +56,20 @@ Globs in file-based connectors select which files to read. In addition to standa
 Use the following macro form as a whole glob entry:
 
 ```
-${date:pattern=yyyy/MM/**, offset=-1M}
-``
+${date:pattern=%Y/%m/**, offset=-1M}
+```
 
-- `pattern`: supports tokens `yyyy`/`YYYY`, `MM`/`mm`, `dd`/`DD`, `HH`/`hh` (tokens are case-insensitive). Include any wildcards you need (e.g. `/**`).
+- `pattern`: uses Python strftime format codes (e.g., `%Y` for 4-digit year, `%m` for 2-digit month, `%d` for day, `%H` for hour). See [Python strftime reference](https://docs.python.org/3/library/datetime.html#strftime-strptime-behavior). Include any wildcards you need (e.g. `/**`).
 - `offset`: optional relative offset with units `Y/y` (years), `M/m` (months), `D/d` (days), `H/h` (hours), case-insensitive. Examples: `0M`, `-1M`, `+3D`, `-1h`.
 - Key/value pairs must be separated by space (commas are not supported due to UI splitting):
-  - `${date:pattern=yyyy/MM/** offset=-1M}`
+  - `${date:pattern=%Y/%m/** offset=-1M}`
 
 Examples:
 
-- Current month only: `${date:pattern=yyyy/MM/**, offset=0M}`
-- Last month only: `${date:pattern=yyyy/MM/**, offset=-1M}`
-- Today by hour: `${date:pattern=yyyy/MM/dd/HH/**, offset=0D}`
-- Yesterday by hour: `${date:pattern=yyyy/MM/dd/HH/**, offset=-1D}`
+- Current month only: `${date:pattern=%Y/%m/**, offset=0M}`
+- Last month only: `${date:pattern=%Y/%m/**, offset=-1M}`
+- Today by hour: `${date:pattern=%Y/%m/%d/%H/**, offset=0D}`
+- Yesterday by hour: `${date:pattern=%Y/%m/%d/%H/**, offset=-1D}`
 
 Notes:
 - The macro must occupy the entire glob string. Do not append `**` outside the macro.
