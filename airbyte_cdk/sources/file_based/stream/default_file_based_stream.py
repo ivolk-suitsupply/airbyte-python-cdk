@@ -151,7 +151,12 @@ class DefaultFileBasedStream(AbstractFileBasedStream, IncrementalMixin):
             raise MissingSchemaError(FileBasedSourceError.MISSING_SCHEMA, stream=self.name)
         # The stream only supports a single file type, so we can use the same parser for all files
         parser = self.get_parser()
-        for file in stream_slice["files"]:
+        
+        # Track successfully processed files to batch state emission
+        processed_files = []
+        files_in_slice = stream_slice["files"]
+        
+        for file in files_in_slice:
             # only serialize the datetime once
             file_datetime_string = file.last_modified.strftime(self.DATE_TIME_FORMAT)
             n_skipped = line_no = 0
@@ -178,7 +183,8 @@ class DefaultFileBasedStream(AbstractFileBasedStream, IncrementalMixin):
                             continue
                         record = self.transform_record(record, file, file_datetime_string)
                         yield stream_data_to_airbyte_message(self.name, record)
-                self._cursor.add_file(file)
+                # Mark file as successfully processed (will be added to cursor after all files in slice)
+                processed_files.append(file)
 
             except StopSyncPerValidationPolicy:
                 yield AirbyteMessage(
@@ -227,6 +233,16 @@ class DefaultFileBasedStream(AbstractFileBasedStream, IncrementalMixin):
                             message=f"Records in file did not pass validation policy. stream={self.name} file={file.uri} n_skipped={n_skipped} validation_policy={self.validation_policy.name}",
                         ),
                     )
+        
+        # Batch add all successfully processed files and emit state once
+        # This significantly reduces state message overhead for slices with many files
+        if processed_files:
+            if hasattr(self._cursor, 'add_files_batch'):
+                self._cursor.add_files_batch(processed_files)
+            else:
+                # Fallback for cursors that don't support batching
+                for file in processed_files:
+                    self._cursor.add_file(file)
 
     @property
     def cursor_field(self) -> Union[str, List[str]]:

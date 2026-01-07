@@ -91,7 +91,7 @@ class FileBasedConcurrentCursor(AbstractConcurrentFileBasedCursor):
                         raise RuntimeError(
                             f"Already found file {_slice} in pending files. This is unexpected. Please contact Support."
                         )
-                self._pending_files.update({file.uri: file})
+                    self._pending_files.update({file.uri: file})
 
     def _compute_prev_sync_cursor(self, value: Optional[StreamState]) -> Tuple[datetime, str]:
         if not value:
@@ -135,6 +135,14 @@ class FileBasedConcurrentCursor(AbstractConcurrentFileBasedCursor):
         Add a file to the cursor. This method is called when a file is processed by the stream.
         :param file: The file to add
         """
+        self._add_file_internal(file, emit_state=True)
+
+    def _add_file_internal(self, file: RemoteFile, emit_state: bool = True) -> None:
+        """
+        Internal method to add a file to history with optional state emission.
+        :param file: The file to add
+        :param emit_state: Whether to emit state message after adding the file
+        """
         if self._pending_files is None:
             raise RuntimeError(
                 "Expected pending partitions to be set but it was not. This is unexpected. Please contact Support."
@@ -165,7 +173,24 @@ class FileBasedConcurrentCursor(AbstractConcurrentFileBasedCursor):
                         raise Exception(
                             "The history is full but there is no files in the history. This should never happen and might be indicative of a bug in the CDK."
                         )
-                self.emit_state_message()
+                if emit_state:
+                    self.emit_state_message()
+
+    def add_files_batch(self, files: List[RemoteFile]) -> None:
+        """
+        Add multiple files to history and emit state only once at the end.
+        This is more efficient than calling add_file() for each file individually.
+        :param files: List of files to add
+        """
+        if not files:
+            return
+        
+        # Add all files without emitting state
+        for file in files[:-1]:
+            self._add_file_internal(file, emit_state=False)
+        
+        # Emit state only after the last file
+        self._add_file_internal(files[-1], emit_state=True)
 
     def emit_state_message(self) -> None:
         with self._state_lock:

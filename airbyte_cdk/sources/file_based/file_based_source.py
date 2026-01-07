@@ -228,6 +228,9 @@ class FileBasedSource(ConcurrentSourceAdapter, ABC):
         """
         Return a list of this source's streams.
         """
+        # Import at function level to avoid UnboundLocalError when used in multiple places
+        from airbyte_cdk.sources.file_based.stream.cursor import DefaultFileBasedCursor
+        from airbyte_cdk.sources.file_based.stream.concurrent.cursor import AbstractConcurrentFileBasedCursor
 
         if self.catalog:
             state_manager = ConnectorStateManager(state=self.state)
@@ -307,7 +310,14 @@ class FileBasedSource(ConcurrentSourceAdapter, ABC):
                         cursor=cursor,
                     )
                 else:
-                    cursor = self.cursor_cls(stream_config)
+                    # Fallback for non-concurrent scenarios (discovery, full_refresh without concurrency)
+                    # Use DefaultFileBasedCursor if cursor_cls requires more than stream_config
+                    if issubclass(self.cursor_cls, AbstractConcurrentFileBasedCursor):
+                        # Concurrent cursor needs multiple args, use DefaultFileBasedCursor as fallback
+                        cursor = DefaultFileBasedCursor(stream_config)
+                    else:
+                        cursor = self.cursor_cls(stream_config)
+                    
                     stream = self._make_file_based_stream(
                         stream_config=stream_config,
                         cursor=cursor,

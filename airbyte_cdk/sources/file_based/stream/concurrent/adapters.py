@@ -241,7 +241,7 @@ class FileBasedStreamPartition(Partition):
             for record_data in self._stream.read_records(
                 cursor_field=self._cursor_field,
                 sync_mode=SyncMode.full_refresh,
-                stream_slice=copy.deepcopy(self._slice),
+                stream_slice=self._slice,
                 stream_state=self._state,
             ):
                 if isinstance(record_data, Mapping):
@@ -277,21 +277,21 @@ class FileBasedStreamPartition(Partition):
     def to_slice(self) -> Optional[Mapping[str, Any]]:
         if self._slice is None:
             return None
-        assert len(self._slice["files"]) == 1, (
-            f"Expected 1 file per partition but got {len(self._slice['files'])} for stream {self.stream_name()}"
-        )
-        file = self._slice["files"][0]
-        return {"files": [file]}
+        # Support multiple files per partition for batching
+        return {"files": self._slice["files"]}
 
     def __hash__(self) -> int:
         if self._slice:
             # Convert the slice to a string so that it can be hashed
-            if len(self._slice["files"]) != 1:
-                raise ValueError(
-                    f"Slices for file-based streams should be of length 1, but got {len(self._slice['files'])}. This is unexpected. Please contact Support."
-                )
+            # Support multiple files per partition for batching
+            files = self._slice["files"]
+            if len(files) == 1:
+                # Single file case
+                s = f"{files[0].last_modified.strftime('%Y-%m-%dT%H:%M:%S.%fZ')}_{files[0].uri}"
             else:
-                s = f"{self._slice['files'][0].last_modified.strftime('%Y-%m-%dT%H:%M:%S.%fZ')}_{self._slice['files'][0].uri}"
+                # Multiple files case: create hash from file count and first/last file URIs
+                file_uris = f"{files[0].uri}___{files[-1].uri}"
+                s = f"batch_{len(files)}_{hash(file_uris)}"
             return hash((self._stream.name, s))
         else:
             return hash(self._stream.name)
@@ -322,20 +322,41 @@ class FileBasedStreamPartitionGenerator(PartitionGenerator):
 
     def generate(self) -> Iterable[FileBasedStreamPartition]:
         pending_partitions = []
+        
+        # Get batch size from stream config
+        batch_size = getattr(self._stream.config, 'file_batch_size', 50)
+        
+        # Accumulate ALL files from ALL slices first
+        all_files = []
         for _slice in self._stream.stream_slices(
             sync_mode=self._sync_mode, cursor_field=self._cursor_field, stream_state=self._state
         ):
             if _slice is not None:
-                for file in _slice.get("files", []):
-                    pending_partitions.append(
-                        FileBasedStreamPartition(
-                            self._stream,
-                            {"files": [copy.deepcopy(file)]},
-                            self._message_repository,
-                            self._sync_mode,
-                            self._cursor_field,
-                            self._state,
-                        )
-                    )
+                files = _slice.get("files", [])
+                all_files.extend(files)
+        
+        # Simple sequential batching: group files into batches of batch_size
+        for i in range(0, len(all_files), batch_size):
+            file_batch = all_files[i:i + batch_size]
+            pending_partitions.append(
+                FileBasedStreamPartition(
+                    self._stream,
+                    {"files": file_batch},
+                    self._message_repository,
+                    self._sync_mode,
+                    self._cursor_field,
+                    self._state,
+                )
+            )
+        
+        # Log summary
+        if all_files:
+            import logging
+            logger = logging.getLogger("airbyte")
+            logger.info(
+                f"Stream '{self._stream.name}': Processing {len(all_files)} files "
+                f"in {len(pending_partitions)} batches of {batch_size} files each"
+            )
+        
         self._cursor.set_pending_partitions(pending_partitions)
         yield from pending_partitions

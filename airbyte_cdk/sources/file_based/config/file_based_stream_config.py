@@ -65,6 +65,18 @@ class FileBasedStreamConfig(BaseModel):
         description="When the state history of the file store is full, syncs will only read files that were last modified in the provided day range.",
         default=3,
     )
+    file_batch_size: int = Field(
+        title="File Batch Size",
+        description=(
+            "Number of files to process in a single batch before emitting a checkpoint. "
+            "Higher values improve performance for many small files by reducing checkpoint overhead, "
+            "but may increase memory usage and recovery time if sync fails. "
+            "Recommended: 50-100 for small files, 10-20 for medium files, 1 for large files (>100MB)."
+        ),
+        default=50,
+        gt=0,
+        le=1000,
+    )
     format: Union[
         AvroFormat, CsvFormat, JsonlFormat, ParquetFormat, UnstructuredFormat, ExcelFormat
     ] = Field(
